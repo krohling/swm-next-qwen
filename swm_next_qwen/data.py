@@ -6,7 +6,7 @@ H ~ U{1..16} and the label read at frame t+H:
   label_source="oracle":  simulator ground truth (hard 0/1)
 
 Both label sources come from the teacher sidecar JSONs
-(data_path/teacher/<episode_id>.json: per-frame lists of
+(data_path/labels/<episode_id>.json: per-frame lists of
 {"q": str, "p_yes": float, "oracle": bool|None}), the same artifacts used by
 dino_wm's DistillDataset. Yes/no question sampling is balanced per sample
 (labels are ~77% "no"; unbalanced draws collapse training to constant-no).
@@ -23,11 +23,16 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 
-class TeacherStore:
+class LabelStore:
+    """Per-episode label sidecars: labels/ (canonical) with teacher/ fallback
+    for dirs assembled before the rename."""
+
     def __init__(self, data_path: str):
-        self.dir = Path(data_path) / "teacher"
+        self.dir = Path(data_path) / "labels"
         if not self.dir.is_dir():
-            raise RuntimeError(f"{self.dir} missing (teacher sidecars required)")
+            self.dir = Path(data_path) / "teacher"
+        if not self.dir.is_dir():
+            raise RuntimeError(f"{data_path}/labels missing (label sidecars required)")
         self._cache: dict[str, list] = {}
 
     def entries(self, episode_id: str, frame_idx: int) -> list:
@@ -66,7 +71,7 @@ class FutureQADataset(Dataset):
         self.label_source = label_source
         self.max_horizon = max_horizon
         self.obs_horizon = obs_horizon
-        self.teacher = TeacherStore(data_path)
+        self.labels = LabelStore(data_path)
         self.fixed_eval = fixed_eval
         self._rng = np.random.default_rng(seed)
         self._ep_cache: dict[str, dict] = {}
@@ -105,7 +110,7 @@ class FutureQADataset(Dataset):
             self.n = samples_per_epoch or len(self.starts)
 
     def _entries(self, ep_idx: int, frame: int) -> list:
-        entries = self.teacher.entries(self.episodes[ep_idx]["id"], frame)
+        entries = self.labels.entries(self.episodes[ep_idx]["id"], frame)
         if self.label_source == "oracle":
             entries = [e for e in entries if e.get("oracle") is not None]
         return entries
