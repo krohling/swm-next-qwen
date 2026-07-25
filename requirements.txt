@@ -1,0 +1,7 @@
+torch>=2.3
+transformers>=4.51
+peft>=0.11
+pyyaml
+wandb
+pillow
+numpy
