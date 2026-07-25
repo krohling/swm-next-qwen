@@ -65,7 +65,9 @@ def teacher_oracle_agreement(vds):
 def validate(model, loader, amean, astd, device):
     model.eval()
     n = bce = 0
-    hits_orc = n_orc = hits_tch = 0
+    hits_orc = n_orc = hits_tch = pred_yes = 0
+    tp = fn = tn = fp = 0          # vs oracle; collapse detectors
+    h_hits, h_n = {}, {}           # per-horizon accuracy vs oracle
     for batch in loader:
         acts = [(a - amean) / astd for a in batch["actions"]]
         logit = model(batch["images"], acts, batch["question"])
@@ -73,17 +75,34 @@ def validate(model, loader, amean, astd, device):
         bce += torch.nn.functional.binary_cross_entropy_with_logits(
             logit, tgt, reduction="sum").item()
         pred = (logit > 0).float().cpu()
+        pred_yes += int(pred.sum())
         orc = batch["oracle"]
         has = orc >= 0
         hits_orc += (pred[has] == orc[has]).sum().item()
         n_orc += int(has.sum())
+        tp += int(((pred == 1) & (orc == 1)).sum()); fn += int(((pred == 0) & (orc == 1)).sum())
+        tn += int(((pred == 0) & (orc == 0)).sum()); fp += int(((pred == 1) & (orc == 0)).sum())
+        for j, a in enumerate(batch["actions"]):
+            if orc[j] < 0:
+                continue
+            hb = min([1, 2, 4, 8, 16], key=lambda b: abs(b - a.shape[0]))
+            h_hits[hb] = h_hits.get(hb, 0) + int(pred[j] == orc[j])
+            h_n[hb] = h_n.get(hb, 0) + 1
         hits_tch += (pred == (batch["teacher_p_yes"] >= 0.5).float()).sum().item()
         n += len(pred)
     model.train()
-    return {"val/bce": bce / max(n, 1),
-            "val/qa_acc_oracle": hits_orc / max(n_orc, 1),
-            "val/qa_acc_teacher": hits_tch / max(n, 1),
-            "val/n": n, "val/n_oracle": n_orc}
+    yes_rec = tp / max(tp + fn, 1)
+    no_rec = tn / max(tn + fp, 1)
+    out = {"val/bce": bce / max(n, 1),
+           "val/qa_acc_oracle": hits_orc / max(n_orc, 1),
+           "val/qa_acc_teacher": hits_tch / max(n, 1),
+           "val/yes_recall": yes_rec, "val/no_recall": no_rec,
+           "val/balanced_acc": (yes_rec + no_rec) / 2,
+           "val/pred_yes_rate": pred_yes / max(n, 1),
+           "val/n": n, "val/n_oracle": n_orc}
+    for b in sorted(h_hits):
+        out[f"val/qa_acc_h{b}"] = h_hits[b] / h_n[b]
+    return out
 
 
 def main():
