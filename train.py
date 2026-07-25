@@ -49,6 +49,18 @@ def action_stats(ds: FutureQADataset, n: int = 200):
     return a.mean(0), a.std(0).clamp_min(1e-6)
 
 
+def teacher_oracle_agreement(vds):
+    """Frozen teacher's oracle accuracy on this exact val split (from labels,
+    no model forward) -- the reference line for val/qa_acc_oracle."""
+    hits = n = 0
+    for _, _, _, e in vds.eval_samples:
+        if e.get("oracle") is None:
+            continue
+        hits += int((float(e["p_yes"]) >= 0.5) == bool(e["oracle"]))
+        n += 1
+    return hits / max(n, 1)
+
+
 @torch.no_grad()
 def validate(model, loader, amean, astd, device):
     model.eval()
@@ -110,6 +122,8 @@ def main():
 
     amean, astd = action_stats(tds)
     torch.save({"action_mean": amean, "action_std": astd}, out_dir / "action_stats.pt")
+    toa = teacher_oracle_agreement(vds)
+    print(f"frozen-teacher oracle agreement on val split: {toa:.4f}", flush=True)
 
     # ---- model + optimizer
     model = ActionConditionedQwen(
@@ -117,6 +131,8 @@ def main():
         action_dim=int(cfg.get("action_dim", 5)),
         lora_r=int(cfg.get("lora_r", 16)), lora_alpha=int(cfg.get("lora_alpha", 32)),
         lora_dropout=float(cfg.get("lora_dropout", 0.05)), device=device)
+    if not cfg.get("grad_ckpt", True):
+        model._base.gradient_checkpointing_disable()
     lora_p, act_p = model.trainable_parameters()
     opt = torch.optim.AdamW([
         {"params": lora_p, "lr": float(cfg.get("lr_lora", 1e-4))},
@@ -167,6 +183,7 @@ def main():
 
         vm = validate(model, vl, amean, astd, device)
         vm["epoch"] = epoch + 1
+        vm["val/teacher_oracle_agreement"] = toa
         wandb.log(vm)
         print(f"epoch {epoch+1}: {vm}", flush=True)
         torch.save({"model": model.trainable_state_dict(), "opt": opt.state_dict(),
