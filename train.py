@@ -81,9 +81,10 @@ def main():
     torch.manual_seed(cfg.get("seed", 0))
 
     import wandb
+    wid = cfg.get("wandb_id")
+    kw = {"resume": "allow", "id": wid} if wid else {}
     run = wandb.init(project=cfg.get("wandb_project", "swm-next-qwen"),
-                     name=cfg["run_name"], config=cfg, resume="allow",
-                     id=cfg.get("wandb_id") or None)
+                     name=cfg["run_name"], config=cfg, **kw)
 
     # ---- data: last val_episodes episodes held out
     man_eps = [e["id"] for e in (lambda m: m["episodes"] if isinstance(m, dict) else m)(
