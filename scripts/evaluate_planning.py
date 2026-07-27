@@ -42,17 +42,20 @@ OGB_TASKS = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True)
+    ap.add_argument("--ckpt", default=None)
     ap.add_argument("--task-idx", type=int, default=0)
     ap.add_argument("--seed-start", type=int, default=6000)
     ap.add_argument("--num-seeds", type=int, default=25)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--gradient-lr", type=float, default=0.2)
+    ap.add_argument("--swm-ckpt", default=None,
+                    help="eval SWM's PaliGemma instead of our adapter (control)")
     args = ap.parse_args()
 
     combo = OGB_TASKS[args.task_idx]
     diffusion_path = str(SWMS_REPO / "ckpts" / "ogbench_base_diffusion"
                          / f"{combo[0]}_{combo[1]}.pt")
-    model = QwenLoraJudge(ckpt_path=args.ckpt)
+    model = None if args.swm_ckpt else QwenLoraJudge(ckpt_path=args.ckpt)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -65,18 +68,20 @@ def main():
             n_succ += bool(r[0]); n_done += 1
             print(f"seed {seed}: cached ({bool(r[0])})", flush=True)
             continue
-        model.reset_episode()
+        if model is not None:
+            model.reset_episode()
         success, t_min = swm_eval(
             seed=seed, reward_type="stack_blocks", env_type="ogbench",
             device="cuda", output_dir=str(seed_dir),
-            ckpt_path="", processor_path="", model=model,
+            ckpt_path=args.swm_ckpt or "", processor_path=args.swm_ckpt or "",
+            model=model,
             diffusion_path=diffusion_path,
             diffusion=True, mppi=False, gradient=True, expert_diffusion=False,
             precision=torch.bfloat16, action_skip=8, model_batch_size=8,
             reward_kwargs={"block_combo": combo, "ood": False},
             action_dim=5, num_steps=50, num_actions_executed=4,
             pred_horizon=16, num_samples=1, num_planning_iters=20,
-            gradient_lr=0.2, gradient_clipping_value=10.0,
+            gradient_lr=args.gradient_lr, gradient_clipping_value=10.0,
             mppi_temperature=1.0, intermediate_hm=False,
         )
         n_succ += bool(success); n_done += 1
