@@ -30,6 +30,7 @@ class QwenLoraJudge:
         device: str = "cuda",
         image_size: int = 448,
         max_action_horizon: int = 16,
+        temperature: float = 1.0,
     ):
         ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         cfg = ck.get("cfg", {})
@@ -52,6 +53,7 @@ class QwenLoraJudge:
         self.device = device
         self.action_dim = self.model.action_dim
         self.max_action_horizon = max_action_horizon
+        self.temperature = float(temperature)
         self.action_mean = ck["action_mean"].float().to(device)
         self.action_std = ck["action_std"].float().to(device)
         self.reset_episode()
@@ -111,7 +113,10 @@ class QwenLoraJudge:
             for s in range(0, len(meta), batch_size):
                 e = min(s + batch_size, len(meta))
                 logit = self.model(rows_img[s:e], rows_act[s:e], rows_q[s:e])
-                p_yes = torch.sigmoid(logit.float())
+                # Plan-time de-saturation: a confident judge (98% acc, hard-label
+                # trained) has extreme logits -> sigmoid gradients vanish. T>1
+                # revives d P(yes)/d actions without changing decisions.
+                p_yes = torch.sigmoid(logit.float() / self.temperature)
                 for k, (q_idx, a_idx, h, desired, weight) in enumerate(meta[s:e]):
                     p = p_yes[k] if str(desired).lower().startswith("y") else 1.0 - p_yes[k]
                     rewards[q_idx, a_idx, h - action_skip : h] = float(p.detach().cpu())

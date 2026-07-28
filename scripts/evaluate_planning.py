@@ -48,6 +48,7 @@ def main():
     ap.add_argument("--num-seeds", type=int, default=25)
     ap.add_argument("--out", required=True)
     ap.add_argument("--gradient-lr", type=float, default=0.2)
+    ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--swm-ckpt", default=None,
                     help="eval SWM's PaliGemma instead of our adapter (control)")
     args = ap.parse_args()
@@ -55,7 +56,7 @@ def main():
     combo = OGB_TASKS[args.task_idx]
     diffusion_path = str(SWMS_REPO / "ckpts" / "ogbench_base_diffusion"
                          / f"{combo[0]}_{combo[1]}.pt")
-    model = None if args.swm_ckpt else QwenLoraJudge(ckpt_path=args.ckpt)
+    model = None if args.swm_ckpt else QwenLoraJudge(ckpt_path=args.ckpt, temperature=args.temperature)
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
