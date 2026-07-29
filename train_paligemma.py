@@ -68,6 +68,20 @@ class PaliGemmaWMTrainable:
         self.yes_id = one(ANSWER_OPTIONS[0])
         self.no_id = one(ANSWER_OPTIONS[1])
 
+    def forward_loss_ce(self, images, actions, questions, answers):
+        """SWM's objective: teacher-forced suffix CE (PaliGemma convention).
+        answers: list of "yes"/"no" strings."""
+        acts = [a if isinstance(a, torch.Tensor) else torch.as_tensor(a, dtype=torch.float32) for a in actions]
+        inputs = self.processor(text=list(questions), images=list(images), actions=acts,
+                                suffix=list(answers), return_tensors="pt", padding="longest")
+        inputs = {k: (v.to(self.device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+        for k in ("pixel_values", "action_values"):
+            if k in inputs:
+                inputs[k] = inputs[k].to(torch.float32)
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            out = self.model(**inputs)
+        return out.loss
+
     def forward_logit(self, images, actions, questions):
         """images: list of PIL (single frame, their convention);
         actions: list of (H_i, 5) fp32 z-scored; questions: list[str].
@@ -183,6 +197,8 @@ def main():
         print(f"resumed at epoch {start_epoch}", flush=True)
 
     yes_w = float(cfg.get("yes_weight", 3.0))
+    objective = str(cfg.get("objective", "suffix_ce"))
+    print(f"objective: {objective}", flush=True)
     m.model.train(); t0 = time.time()
     for epoch in range(start_epoch, epochs):
         run_loss = n_seen = 0
@@ -190,11 +206,15 @@ def main():
         for i, batch in enumerate(tl):
             acts = [(a - amean) / astd for a in batch["actions"]]
             imgs = [pair[1] for pair in batch["images"]]
-            logit = m.forward_logit(imgs, acts, batch["question"])
             tgt = batch["target"].to(device)
-            w = 1.0 + (yes_w - 1.0) * tgt
-            loss = (torch.nn.functional.binary_cross_entropy_with_logits(
-                logit, tgt, reduction="none") * w).mean()
+            if objective == "suffix_ce":
+                answers = ["yes" if v >= 0.5 else "no" for v in batch["target"]]
+                loss = m.forward_loss_ce(imgs, acts, batch["question"], answers)
+            else:
+                logit = m.forward_logit(imgs, acts, batch["question"])
+                w = 1.0 + (yes_w - 1.0) * tgt
+                loss = (torch.nn.functional.binary_cross_entropy_with_logits(
+                    logit, tgt, reduction="none") * w).mean()
             (loss / accum).backward()
             run_loss += loss.item() * len(tgt); n_seen += len(tgt)
             if (i + 1) % accum == 0:

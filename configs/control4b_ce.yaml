@@ -1,0 +1,17 @@
+run_name: control4b-paligemma-ce
+out_dir: /work/11599/krohling/vista/swm-followup/qwen_lora_runs/control4b_ce
+data_path: /work/11599/krohling/vista/swm-followup/world-model-data/ogb-recipe-balanced
+processor_path: /work/11599/krohling/vista/swm-followup/swms/ckpts/paligemma_wm_ogbench
+base_model: google/paligemma-3b-pt-224
+label_source: oracle
+objective: suffix_ce
+val_episodes: 30
+samples_per_epoch: 110000
+val_samples: 2000
+micro_batch: 16
+grad_accum: 4
+epochs: 4
+lr: 1.0e-5
+workers: 8
+seed: 0
+wandb_project: swm-next-qwen
