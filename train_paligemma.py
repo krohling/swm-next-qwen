@@ -72,7 +72,7 @@ class PaliGemmaWMTrainable:
         """images: list of PIL (single frame, their convention);
         actions: list of (H_i, 5) fp32 z-scored; questions: list[str].
         Returns (B,) binary yes-vs-no logit."""
-        acts = [a.numpy() if isinstance(a, torch.Tensor) else a for a in actions]
+        acts = [a if isinstance(a, torch.Tensor) else torch.as_tensor(a, dtype=torch.float32) for a in actions]
         inputs = self.processor(text=list(questions), images=list(images), actions=acts,
                                 return_tensors="pt", padding="longest",
                                 tokenize_newline_separately=False)
