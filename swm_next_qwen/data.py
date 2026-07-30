@@ -89,6 +89,21 @@ class FutureQADataset(Dataset):
             L = int(e["length"])
             for t in range(1, L - 1):
                 self.starts.append((i, t))
+        # True 50/50 class balance needs an index of yes-bearing targets:
+        # most random (frame, H) draws have only "no" answers, so the old
+        # "yes-pool if present" draw delivered ~11% yes in practice.
+        self.yes_targets = []
+        if not fixed_eval:
+            for i, e in enumerate(eps):
+                ents = self.labels._cache.get(e["id"])
+                # force-load
+                for fr in range(2, int(e["length"]) - 1):
+                    for x in self.labels.entries(e["id"], fr):
+                        if self.label_source == "oracle" and x.get("oracle") is None:
+                            continue
+                        if self._target_of(x) >= 0.5:
+                            self.yes_targets.append((i, fr))
+                            break
         if fixed_eval:
             # Deterministic eval set: fixed (start, H, entry) triples.
             rng = np.random.default_rng(seed)
@@ -138,21 +153,25 @@ class FutureQADataset(Dataset):
         if self.fixed_eval:
             ep_idx, t, H, e = self.eval_samples[idx]
         else:
-            # Rejection-sample a start whose target frame has questions.
-            for _ in range(50):
-                ep_idx, t = self.starts[self._rng.integers(len(self.starts))]
-                L = int(self.episodes[ep_idx]["length"])
-                H = int(self._rng.integers(1, min(self.max_horizon, L - 1 - t) + 1))
-                entries = self._entries(ep_idx, t + H)
-                if entries:
-                    break
+            want_yes = bool(self.yes_targets) and self._rng.random() < 0.5
+            if want_yes:
+                # draw a known yes-bearing target frame, back out (t, H)
+                ep_idx, tf = self.yes_targets[self._rng.integers(len(self.yes_targets))]
+                H = int(self._rng.integers(1, min(self.max_horizon, tf - 1) + 1))
+                t = tf - H
+                entries = [x for x in self._entries(ep_idx, tf) if self._target_of(x) >= 0.5]
+                e = entries[self._rng.integers(len(entries))]
             else:
-                raise RuntimeError("no labeled samples found in 50 draws")
-            # Balanced yes/no draw (see module docstring).
-            yes = [x for x in entries if self._target_of(x) >= 0.5]
-            no = [x for x in entries if self._target_of(x) < 0.5]
-            pool = yes if yes and (not no or self._rng.random() < 0.5) else (no or yes)
-            e = pool[self._rng.integers(len(pool))]
+                for _ in range(50):
+                    ep_idx, t = self.starts[self._rng.integers(len(self.starts))]
+                    L = int(self.episodes[ep_idx]["length"])
+                    H = int(self._rng.integers(1, min(self.max_horizon, L - 1 - t) + 1))
+                    entries = [x for x in self._entries(ep_idx, t + H) if self._target_of(x) < 0.5]
+                    if entries:
+                        break
+                else:
+                    raise RuntimeError("no labeled samples found in 50 draws")
+                e = entries[self._rng.integers(len(entries))]
 
         d = self._episode(ep_idx)
         frames, actions = d["frames"], torch.as_tensor(d["actions"], dtype=torch.float32)
