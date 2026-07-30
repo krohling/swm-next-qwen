@@ -186,8 +186,12 @@ def main():
     accum = int(cfg["grad_accum"]); epochs = int(cfg["epochs"])
     steps_per_epoch = math.ceil(len(tds) / (int(cfg["micro_batch"]) * accum))
     total = steps_per_epoch * epochs; warmup = max(1, int(0.03 * total))
-    sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(
-        (s + 1) / warmup, 0.5 * (1 + math.cos(math.pi * min(1.0, s / total)))))
+    if str(cfg.get("schedule", "cosine")) == "linear":
+        # SWM's published recipe: linear decay from the initial LR, no warmup.
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: max(0.0, 1.0 - s / total))
+    else:
+        sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(
+            (s + 1) / warmup, 0.5 * (1 + math.cos(math.pi * min(1.0, s / total)))))
 
     start_epoch, gstep = 0, 0
     ck = out_dir / "last.pt"
