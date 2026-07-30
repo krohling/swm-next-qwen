@@ -97,10 +97,11 @@ class PaliGemmaWMTrainable:
             inputs["action_values"] = inputs["action_values"].to(torch.float32)
         with torch.autocast("cuda", dtype=torch.bfloat16):
             out = self.model(**inputs)
-        # last non-pad position per row
-        am = inputs["attention_mask"]
-        last = am.sum(dim=1) - 1
-        logits = out.logits[torch.arange(len(questions), device=self.device), last].float()
+        # Their tokenizer LEFT-pads: the last real token is index -1 for every
+        # row (matches their get_scores). Assert so a config change can't
+        # silently reintroduce the wrong-position readout.
+        assert self.processor.tokenizer.padding_side == "left"
+        logits = out.logits[:, -1, :].float()
         return logits[:, self.yes_id] - logits[:, self.no_id]
 
 
